@@ -1,0 +1,5 @@
+{
+  "name": "QuantFlow Pro - 币圈量化交易系统",
+  "description": "专业的加密货币自动化交易平台，支持Python策略托管、定时任务调度、实时日志监控及币安U本位合约资产管理。",
+  "requestFramePermissions": []
+}
