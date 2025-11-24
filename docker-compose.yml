@@ -17,4 +17,6 @@ services:
       dockerfile: Dockerfile
     volumes:
       - ./backend/data:/app/data
+    ports:
+      - "8000:8000"
     restart: always

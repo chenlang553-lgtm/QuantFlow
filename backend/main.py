@@ -155,7 +155,7 @@ def delete_strategy(strategy_id: str, db: Session = Depends(get_db)) -> Dict[str
 @app.post("/api/settings")
 def save_settings(settings: SettingsUpdate, db: Session = Depends(get_db)) -> Dict[str, str]:
     settings_entry = db.query(SettingsDB).filter(SettingsDB.key == "global_config").first()
-    settings_json = json.dumps(settings.dict())
+    settings_json = json.dumps(settings.model_dump())
     if not settings_entry:
         settings_entry = SettingsDB(key="global_config", value=settings_json)
         db.add(settings_entry)
