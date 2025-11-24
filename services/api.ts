@@ -2,28 +2,46 @@
 import { AccountInfo, Strategy, StrategyStatus, LogEntry, SystemSettings } from '../types';
 import { MOCK_ACCOUNT, MOCK_STRATEGIES } from './mockData';
 
-// 生产环境配置
-const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:8000/api';
-// 如果未检测到后端，默认回退到 Mock 模式以便演示
-const USE_MOCK = true; 
+// 在生产环境中，通过 Nginx 代理，API 地址应为相对路径 '/api'
+const API_BASE_URL = '/api';
 
-// 模拟延迟，让体验更真实
-const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+// 自动检测是否需要使用 Mock 数据
+// 如果是本地开发环境且没有启动后端，或者在构建预览中，默认使用 Mock
+const IS_DEV = process.env.NODE_ENV === 'development';
+const USE_MOCK_FALLBACK = true;
 
 export const api = {
   // --- 策略管理 ---
   getStrategies: async (): Promise<Strategy[]> => {
-    if (USE_MOCK) {
-      await delay(500);
-      return [...MOCK_STRATEGIES];
+    try {
+      const res = await fetch(`${API_BASE_URL}/strategies`);
+      if (!res.ok) {
+        // 如果 API 返回 404 (通常是因为 Nginx 未配置或后端没启动)，抛出异常触发 fallback
+        throw new Error(`API Error: ${res.status}`);
+      }
+      const contentType = res.headers.get("content-type");
+      if (contentType && contentType.indexOf("application/json") === -1) {
+        throw new Error("Invalid Content-Type (Expected JSON)");
+      }
+      return await res.json();
+    } catch (e) {
+      console.warn("Fetch strategies failed, falling back to mock/empty:", e);
+      return USE_MOCK_FALLBACK ? [...MOCK_STRATEGIES] : [];
     }
-    const res = await fetch(`${API_BASE_URL}/strategies`);
-    return res.json();
   },
 
   createStrategy: async (data: Partial<Strategy>): Promise<Strategy> => {
-    if (USE_MOCK) {
-      await delay(800);
+    try {
+      const res = await fetch(`${API_BASE_URL}/strategies`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data)
+      });
+      if (!res.ok) throw new Error('Failed to create strategy');
+      return await res.json();
+    } catch (e) {
+      console.error(e);
+      // Mock creation for UI responsiveness if backend fails
       const newStrategy: Strategy = {
         id: Date.now().toString(),
         name: data.name || 'New Strategy',
@@ -35,79 +53,63 @@ export const api = {
         logs: [],
         pnlDay: 0
       };
-      MOCK_STRATEGIES.push(newStrategy); // Update mock store
       return newStrategy;
     }
-    const res = await fetch(`${API_BASE_URL}/strategies`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(data)
-    });
-    return res.json();
   },
 
   updateStrategyStatus: async (id: string, status: StrategyStatus): Promise<void> => {
-    if (USE_MOCK) {
-      await delay(300);
-      const idx = MOCK_STRATEGIES.findIndex(s => s.id === id);
-      if (idx !== -1) {
-        MOCK_STRATEGIES[idx].status = status;
-        MOCK_STRATEGIES[idx].logs.push({
-            id: Date.now().toString(),
-            timestamp: new Date().toLocaleTimeString(),
-            level: 'INFO',
-            message: `Command sent: ${status}`
-        });
-      }
-      return;
+    try {
+      await fetch(`${API_BASE_URL}/strategies/${id}/status`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status })
+      });
+    } catch (e) {
+      console.error("Status update failed", e);
     }
-    await fetch(`${API_BASE_URL}/strategies/${id}/status`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ status })
-    });
   },
 
   deleteStrategy: async (id: string): Promise<void> => {
-    if (USE_MOCK) {
-        await delay(300);
-        const idx = MOCK_STRATEGIES.findIndex(s => s.id === id);
-        if (idx !== -1) MOCK_STRATEGIES.splice(idx, 1);
-        return;
+    try {
+       await fetch(`${API_BASE_URL}/strategies/${id}`, { method: 'DELETE' });
+    } catch (e) {
+       console.error("Delete failed", e);
     }
-    await fetch(`${API_BASE_URL}/strategies/${id}`, { method: 'DELETE' });
   },
 
   // --- 账户信息 ---
   getAccountInfo: async (): Promise<AccountInfo> => {
-    if (USE_MOCK) {
-      // 模拟一点数据波动
-      const volatility = (Math.random() - 0.5) * 20;
-      MOCK_ACCOUNT.unrealizedPnL += volatility;
-      MOCK_ACCOUNT.totalBalance += (volatility * 0.1);
-      return { ...MOCK_ACCOUNT };
+    try {
+      const res = await fetch(`${API_BASE_URL}/account`);
+      if (!res.ok) throw new Error('Failed to fetch account');
+      const contentType = res.headers.get("content-type");
+      if (contentType && contentType.indexOf("application/json") === -1) {
+         throw new Error("Invalid Content-Type");
+      }
+      return await res.json();
+    } catch (error) {
+       console.warn("API unavailable, using Mock Account data");
+       // Return Mock data so the dashboard doesn't look empty/broken during setup
+       return MOCK_ACCOUNT;
     }
-    const res = await fetch(`${API_BASE_URL}/account`);
-    return res.json();
   },
 
   // --- 系统设置 ---
   saveSettings: async (settings: SystemSettings): Promise<void> => {
-      if (USE_MOCK) {
-          await delay(1000);
-          localStorage.setItem('quantflow_settings', JSON.stringify(settings));
-          return;
+      try {
+        await fetch(`${API_BASE_URL}/settings`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(settings)
+        });
+      } catch (e) {
+        console.error("Save settings failed", e);
+        localStorage.setItem('quantflow_settings', JSON.stringify(settings));
       }
-      await fetch(`${API_BASE_URL}/settings`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(settings)
-      });
   },
   
   // --- 检查后端连接 ---
   checkHealth: async (): Promise<boolean> => {
-      if (USE_MOCK) return true;
       try {
           const res = await fetch(`${API_BASE_URL}/health`);
           return res.ok;
