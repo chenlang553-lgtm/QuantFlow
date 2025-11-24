@@ -7,122 +7,88 @@ import PositionsTable from './components/PositionsTable';
 import StrategyModal from './components/StrategyModal';
 import SettingsView from './components/SettingsView';
 import { ViewState, Strategy, StrategyStatus, LogEntry, AccountInfo } from './types';
-import { MOCK_ACCOUNT, MOCK_STRATEGIES } from './services/mockData';
-import { Play, Pause, Square, Plus, Wallet, Clock, Trash2, Terminal, ScrollText, Settings } from 'lucide-react';
+import { MOCK_ACCOUNT, MOCK_STRATEGIES } from './services/mockData'; // Keep as fallback type reference
+import { api } from './services/api'; // Import the new API service
+import { Play, Pause, Square, Plus, Wallet, Clock, Trash2, Terminal, ScrollText, Settings, Loader2 } from 'lucide-react';
 
-// Use Account Info Mock
 const App: React.FC = () => {
   const [currentView, setCurrentView] = useState<ViewState>('DASHBOARD');
-  const [strategies, setStrategies] = useState<Strategy[]>(MOCK_STRATEGIES);
-  const [account, setAccount] = useState<AccountInfo>(MOCK_ACCOUNT);
+  const [strategies, setStrategies] = useState<Strategy[]>([]);
+  const [account, setAccount] = useState<AccountInfo | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [selectedStrategyId, setSelectedStrategyId] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
 
-  // Simulated live data updates
+  // Initial Data Fetch
   useEffect(() => {
-    const interval = setInterval(() => {
-      // 1. Update Account PnL randomly
-      setAccount(prev => {
-        const pnlChange = (Math.random() - 0.5) * 10;
-        const newUnrealized = prev.unrealizedPnL + pnlChange;
-        return {
-          ...prev,
-          unrealizedPnL: newUnrealized,
-          totalBalance: prev.totalBalance + (pnlChange * 0.1) // Assume some realized
-        };
-      });
-
-      // 2. Add logs to running strategies
-      setStrategies(prevStrategies => 
-        prevStrategies.map(strat => {
-          if (strat.status === StrategyStatus.RUNNING) {
-            // Check schedule
-            const now = new Date();
-            const currentTime = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
-            if (currentTime < strat.scheduleStart || currentTime > strat.scheduleEnd) {
-                 return {
-                    ...strat,
-                    status: StrategyStatus.SCHEDULED,
-                    logs: [...strat.logs, {
-                        id: Date.now().toString(),
-                        timestamp: new Date().toLocaleTimeString(),
-                        level: 'INFO',
-                        message: `不在运行时间段 (${strat.scheduleStart}-${strat.scheduleEnd}). 进入定时等待模式。`
-                    }]
-                 }
-            }
-
-            // Random log generation for effect
-            if (Math.random() > 0.7) {
-              const newLog: LogEntry = {
-                id: Date.now().toString(),
-                timestamp: new Date().toLocaleTimeString(),
-                level: Math.random() > 0.9 ? 'TRADE' : 'INFO',
-                message: Math.random() > 0.9 
-                  ? `Placed order for ${['BTC','ETH','SOL'][Math.floor(Math.random()*3)]}USDT` 
-                  : `Processing tick data... Volatility: ${(Math.random()*2).toFixed(2)}%`
-              };
-              return { ...strat, logs: [...strat.logs, newLog] };
-            }
-          } else if (strat.status === StrategyStatus.SCHEDULED) {
-             const now = new Date();
-             const currentTime = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
-             if (currentTime >= strat.scheduleStart && currentTime <= strat.scheduleEnd) {
-                 return {
-                     ...strat,
-                     status: StrategyStatus.RUNNING,
-                     logs: [...strat.logs, {
-                        id: Date.now().toString(),
-                        timestamp: new Date().toLocaleTimeString(),
-                        level: 'INFO',
-                        message: `进入运行时间段 (${strat.scheduleStart}). 策略自动启动。`
-                     }]
-                 }
-             }
-          }
-          return strat;
-        })
-      );
-    }, 2000);
-
-    return () => clearInterval(interval);
+    const fetchData = async () => {
+      try {
+        const [stratData, accountData] = await Promise.all([
+          api.getStrategies(),
+          api.getAccountInfo()
+        ]);
+        setStrategies(stratData);
+        setAccount(accountData);
+      } catch (e) {
+        console.error("Failed to fetch initial data", e);
+      } finally {
+        setIsLoading(false);
+      }
+    };
+    fetchData();
   }, []);
 
-  const handleStatusChange = (id: string, newStatus: StrategyStatus) => {
-    setStrategies(prev => prev.map(s => {
-      if (s.id === id) {
-        return { 
-          ...s, 
-          status: newStatus,
-          logs: [...s.logs, {
-            id: Date.now().toString(),
-            timestamp: new Date().toLocaleTimeString(),
-            level: 'INFO',
-            message: `User changed status to ${newStatus}`
-          }]
-        };
-      }
-      return s;
-    }));
+  // Polling for live updates (simulating WebSocket or periodic fetch)
+  useEffect(() => {
+    if (isLoading) return;
+    
+    const interval = setInterval(async () => {
+      // Refresh Account
+      const newAccount = await api.getAccountInfo();
+      setAccount(newAccount);
+
+      // Refresh Logs / Status (In a real app, this would be optimized or via WS)
+      // Here we just update the mock strategies internally in api.ts so fetching them again shows updates
+      // if using real backend, this fetch is necessary.
+      const newStrategies = await api.getStrategies();
+      
+      // Merge logs locally if needed, or just replace strategies if we trust backend diffs
+      // For simplicity in this "Mock/Real" hybrid, we replace, but try to preserve selection
+      setStrategies(newStrategies);
+
+    }, 3000);
+
+    return () => clearInterval(interval);
+  }, [isLoading]);
+
+  const handleStatusChange = async (id: string, newStatus: StrategyStatus) => {
+    // Optimistic UI update
+    setStrategies(prev => prev.map(s => s.id === id ? { ...s, status: newStatus } : s));
+    
+    try {
+      await api.updateStrategyStatus(id, newStatus);
+    } catch (error) {
+       console.error("Status update failed", error);
+       // Revert on error would go here
+    }
   };
 
-  const handleAddStrategy = (data: { name: string; scheduleStart: string; scheduleEnd: string; code: string; description: string }) => {
-    const newStrategy: Strategy = {
-      id: Date.now().toString(),
-      name: data.name,
-      description: data.description,
-      code: data.code,
-      status: StrategyStatus.STOPPED,
-      scheduleStart: data.scheduleStart,
-      scheduleEnd: data.scheduleEnd,
-      logs: [],
-      pnlDay: 0
-    };
-    setStrategies([...strategies, newStrategy]);
+  const handleAddStrategy = async (data: { name: string; scheduleStart: string; scheduleEnd: string; code: string; description: string }) => {
+    setIsLoading(true);
+    try {
+        await api.createStrategy(data);
+        const newStrategies = await api.getStrategies();
+        setStrategies(newStrategies);
+    } catch (error) {
+        console.error("Failed to create strategy", error);
+    } finally {
+        setIsLoading(false);
+    }
   };
   
-  const handleDeleteStrategy = (id: string) => {
-      if(window.confirm('确定要删除这个策略吗？')) {
+  const handleDeleteStrategy = async (id: string) => {
+      if(window.confirm('确定要删除这个策略吗？此操作将停止正在运行的实例。')) {
+          await api.deleteStrategy(id);
           setStrategies(prev => prev.filter(s => s.id !== id));
           if(selectedStrategyId === id) setSelectedStrategyId(null);
       }
@@ -130,29 +96,33 @@ const App: React.FC = () => {
 
   // --- Views ---
 
-  const renderDashboard = () => (
-    <div className="space-y-6">
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-        <StatCard title="U本位账户权益 (USDT)" value={`$${account.totalBalance.toLocaleString()}`} subValue="+$234.50" trend="up" icon={<Wallet className="w-5 h-5 text-blue-400" />} />
-        <StatCard title="未实现盈亏 (Unrealized PnL)" value={`$${account.unrealizedPnL.toLocaleString()}`} trend={account.unrealizedPnL >= 0 ? 'up' : 'down'} icon={<Wallet className="w-5 h-5 text-purple-400" />} />
-        <StatCard title="活跃策略" value={strategies.filter(s => s.status === 'RUNNING').length.toString()} subLabel={`总策略数: ${strategies.length}`} icon={<Play className="w-5 h-5 text-green-400" />} />
-        <StatCard title="今日已实现盈亏" value="+$124.20" trend="up" icon={<Wallet className="w-5 h-5 text-yellow-400" />} />
-      </div>
+  const renderDashboard = () => {
+    if (!account) return <div className="p-10 text-center text-slate-500">Loading Account Data...</div>;
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 h-[500px]">
-        <div className="lg:col-span-2 bg-slate-800 rounded-xl border border-slate-700 p-6 flex flex-col">
-          <h3 className="text-white font-bold mb-4 flex items-center">
-             <Wallet className="w-5 h-5 mr-2 text-binance-yellow" />
-             当前持仓监控
-          </h3>
-          <PositionsTable positions={account.positions} />
+    return (
+      <div className="space-y-6">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+          <StatCard title="U本位账户权益 (USDT)" value={`$${account.totalBalance.toLocaleString(undefined, { maximumFractionDigits: 2 })}`} subValue="+$234.50" trend="up" icon={<Wallet className="w-5 h-5 text-blue-400" />} />
+          <StatCard title="未实现盈亏 (Unrealized PnL)" value={`$${account.unrealizedPnL.toLocaleString(undefined, { maximumFractionDigits: 2 })}`} trend={account.unrealizedPnL >= 0 ? 'up' : 'down'} icon={<Wallet className="w-5 h-5 text-purple-400" />} />
+          <StatCard title="活跃策略" value={strategies.filter(s => s.status === 'RUNNING').length.toString()} subLabel={`总策略数: ${strategies.length}`} icon={<Play className="w-5 h-5 text-green-400" />} />
+          <StatCard title="今日已实现盈亏" value="+$124.20" trend="up" icon={<Wallet className="w-5 h-5 text-yellow-400" />} />
         </div>
-        <div className="h-full">
-            <LogViewer logs={strategies.flatMap(s => s.logs).sort((a,b) => b.timestamp.localeCompare(a.timestamp)).slice(0, 50)} title="全局系统日志" />
+
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 h-[500px]">
+          <div className="lg:col-span-2 bg-slate-800 rounded-xl border border-slate-700 p-6 flex flex-col">
+            <h3 className="text-white font-bold mb-4 flex items-center">
+               <Wallet className="w-5 h-5 mr-2 text-binance-yellow" />
+               当前持仓监控
+            </h3>
+            <PositionsTable positions={account.positions} />
+          </div>
+          <div className="h-full">
+              <LogViewer logs={strategies.flatMap(s => s.logs).sort((a,b) => b.timestamp.localeCompare(a.timestamp)).slice(0, 50)} title="全局系统日志" />
+          </div>
         </div>
       </div>
-    </div>
-  );
+    );
+  };
 
   const renderStrategies = () => (
     <div className="space-y-6">
@@ -170,6 +140,12 @@ const App: React.FC = () => {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 h-[calc(100vh-180px)]">
         {/* Strategy List */}
         <div className="lg:col-span-2 overflow-y-auto space-y-4 pr-2 custom-scrollbar">
+          {strategies.length === 0 && (
+              <div className="text-center py-20 bg-slate-800/50 rounded-xl border border-dashed border-slate-700">
+                  <ScrollText className="w-12 h-12 text-slate-600 mx-auto mb-4" />
+                  <p className="text-slate-400">暂无策略，请点击右上角新建</p>
+              </div>
+          )}
           {strategies.map(strategy => (
             <div 
               key={strategy.id} 
@@ -283,25 +259,28 @@ const App: React.FC = () => {
     </div>
   );
   
-  const renderAccount = () => (
+  const renderAccount = () => {
+      if (!account) return <div className="p-10 text-center text-slate-500">Loading Account Data...</div>;
+
+      return (
       <div className="space-y-6">
           <h2 className="text-2xl font-bold text-white">账户详情 (USDT-M Futures)</h2>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
              <div className="bg-gradient-to-br from-slate-800 to-slate-900 p-6 rounded-xl border border-slate-700">
                  <p className="text-slate-400 text-sm mb-1">账户总权益 (Margin Balance)</p>
-                 <h3 className="text-3xl font-bold text-white">${account.marginBalance.toLocaleString()}</h3>
+                 <h3 className="text-3xl font-bold text-white">${account.marginBalance.toLocaleString(undefined, { maximumFractionDigits: 2 })}</h3>
                  <div className="mt-4 flex justify-between text-sm">
                      <span className="text-slate-500">可用下单资金</span>
-                     <span className="text-white">${account.availableBalance.toLocaleString()}</span>
+                     <span className="text-white">${account.availableBalance.toLocaleString(undefined, { maximumFractionDigits: 2 })}</span>
                  </div>
              </div>
              <div className="bg-slate-800 p-6 rounded-xl border border-slate-700">
                  <p className="text-slate-400 text-sm mb-1">维持保证金 (Maintenance)</p>
-                 <h3 className="text-3xl font-bold text-white">${account.maintenanceMargin.toLocaleString()}</h3>
+                 <h3 className="text-3xl font-bold text-white">${account.maintenanceMargin.toLocaleString(undefined, { maximumFractionDigits: 2 })}</h3>
                  <div className="mt-4 w-full bg-slate-700 rounded-full h-2">
-                     <div className="bg-green-500 h-2 rounded-full" style={{ width: `${(account.maintenanceMargin / account.marginBalance) * 100}%` }}></div>
+                     <div className="bg-green-500 h-2 rounded-full" style={{ width: `${(account.maintenanceMargin / (account.marginBalance || 1)) * 100}%` }}></div>
                  </div>
-                 <p className="text-xs text-slate-500 mt-2 text-right">风险率: {((account.maintenanceMargin / account.marginBalance) * 100).toFixed(2)}%</p>
+                 <p className="text-xs text-slate-500 mt-2 text-right">风险率: {((account.maintenanceMargin / (account.marginBalance || 1)) * 100).toFixed(2)}%</p>
              </div>
           </div>
           <div className="bg-slate-800 rounded-xl border border-slate-700 p-6">
@@ -309,7 +288,19 @@ const App: React.FC = () => {
                <PositionsTable positions={account.positions} />
           </div>
       </div>
-  );
+      )
+  };
+
+  if (isLoading) {
+      return (
+          <div className="h-screen bg-slate-950 flex items-center justify-center">
+              <div className="flex flex-col items-center">
+                  <Loader2 className="w-10 h-10 text-blue-500 animate-spin mb-4" />
+                  <p className="text-slate-400">正在连接交易节点...</p>
+              </div>
+          </div>
+      )
+  }
 
   return (
     <div className="flex h-screen bg-slate-950 font-sans">

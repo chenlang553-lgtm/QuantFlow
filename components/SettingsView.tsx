@@ -1,7 +1,8 @@
 
 import React, { useState, useEffect } from 'react';
 import { SystemSettings } from '../types';
-import { Save, Shield, Key, Bell, Server, Eye, EyeOff, AlertTriangle } from 'lucide-react';
+import { api } from '../services/api';
+import { Save, Shield, Key, Bell, Server, Eye, EyeOff, Activity, Terminal, CheckCircle, AlertTriangle } from 'lucide-react';
 
 const DEFAULT_SETTINGS: SystemSettings = {
   exchange: {
@@ -26,9 +27,11 @@ const SettingsView: React.FC = () => {
   const [showSecret, setShowSecret] = useState(false);
   const [activeTab, setActiveTab] = useState<'EXCHANGE' | 'RISK' | 'NOTIFY' | 'SYSTEM'>('EXCHANGE');
   const [saveStatus, setSaveStatus] = useState<'IDLE' | 'SAVING' | 'SAVED'>('IDLE');
+  const [backendHealth, setBackendHealth] = useState<'CHECKING' | 'ONLINE' | 'OFFLINE'>('CHECKING');
 
   useEffect(() => {
-    // Load settings from local storage on mount
+    // 尝试从 localStorage 加载临时配置，防止刷新丢失，
+    // 真实场景下应从 API 获取
     const saved = localStorage.getItem('quantflow_settings');
     if (saved) {
       try {
@@ -37,16 +40,33 @@ const SettingsView: React.FC = () => {
         console.error("Failed to parse settings", e);
       }
     }
+    
+    checkBackend();
   }, []);
 
-  const handleSave = () => {
+  const checkBackend = async () => {
+      setBackendHealth('CHECKING');
+      try {
+          const isHealthy = await api.checkHealth();
+          setBackendHealth(isHealthy ? 'ONLINE' : 'OFFLINE');
+      } catch (e) {
+          setBackendHealth('OFFLINE');
+      }
+  }
+
+  const handleSave = async () => {
     setSaveStatus('SAVING');
-    // Simulate API call / Local persistence
-    setTimeout(() => {
-      localStorage.setItem('quantflow_settings', JSON.stringify(settings));
-      setSaveStatus('SAVED');
-      setTimeout(() => setSaveStatus('IDLE'), 2000);
-    }, 800);
+    try {
+        await api.saveSettings(settings);
+        // 同时保存到 LocalStorage 作为备份
+        localStorage.setItem('quantflow_settings', JSON.stringify(settings));
+        setSaveStatus('SAVED');
+    } catch (e) {
+        console.error(e);
+        alert("保存失败，请检查后端连接");
+    } finally {
+        setTimeout(() => setSaveStatus('IDLE'), 2000);
+    }
   };
 
   const updateSetting = (category: keyof SystemSettings, field: string, value: any) => {
@@ -104,12 +124,6 @@ const SettingsView: React.FC = () => {
               className="w-4 h-4 rounded border-slate-600 bg-slate-700 text-blue-600 focus:ring-blue-500"
             />
             <label htmlFor="testnet" className="text-sm text-slate-300">使用测试网 (Testnet)</label>
-          </div>
-          <div className="bg-yellow-500/10 border border-yellow-500/20 p-3 rounded-lg flex items-start space-x-3 mt-4">
-            <AlertTriangle className="w-5 h-5 text-yellow-500 flex-shrink-0" />
-            <p className="text-xs text-yellow-200/80">
-              请确保您的 API Key 已开启“合约交易”权限，并绑定了部署服务器的 IP 地址以确保安全。不要将 API Key 透露给任何人。
-            </p>
           </div>
         </div>
       </div>
@@ -203,57 +217,66 @@ const SettingsView: React.FC = () => {
   );
 
   const renderSystemTab = () => (
-      <div className="space-y-6">
-          <div className="bg-slate-800 p-6 rounded-xl border border-slate-700">
-              <h3 className="text-lg font-medium text-white mb-4 flex items-center">
-                  <Server className="w-5 h-5 mr-2 text-blue-400" />
-                  Linux 部署信息
-              </h3>
-              <div className="space-y-4 text-sm text-slate-300">
-                  <p>要在 Linux 服务器上完整运行此系统，请确保配置以下环境变量：</p>
-                  <div className="bg-black/50 p-4 rounded-lg font-mono text-xs space-y-2 border border-slate-700">
-                      <div className="flex text-slate-400">
-                          <span className="w-40 text-blue-400">API_KEY</span>
-                          <span>Google Gemini API Key (用于AI策略生成)</span>
-                      </div>
-                      <div className="flex text-slate-400">
-                          <span className="w-40 text-blue-400">BINANCE_API_KEY</span>
-                          <span>币安交易账户 API Key</span>
-                      </div>
-                      <div className="flex text-slate-400">
-                          <span className="w-40 text-blue-400">BINANCE_SECRET</span>
-                          <span>币安交易账户 Secret</span>
-                      </div>
-                      <div className="flex text-slate-400">
-                          <span className="w-40 text-blue-400">REDIS_URL</span>
-                          <span>redis://localhost:6379 (用于任务队列)</span>
-                      </div>
-                      <div className="flex text-slate-400">
-                          <span className="w-40 text-blue-400">DB_URL</span>
-                          <span>postgresql://user:pass@localhost:5432/quant (策略存储)</span>
-                      </div>
-                  </div>
-                  
-                  <div className="mt-4">
-                      <p className="mb-2">Docker 启动命令示例：</p>
-                      <pre className="bg-black/50 p-4 rounded-lg font-mono text-xs text-green-400 overflow-x-auto border border-slate-700">
-docker run -d \
-  -e API_KEY=your_gemini_key \
-  -e BINANCE_API_KEY=your_binance_key \
-  -p 3000:3000 \
-  --name quantflow \
-  quantflow/pro:latest
-                      </pre>
-                  </div>
+    <div className="space-y-6">
+        <div className="bg-slate-800 p-6 rounded-xl border border-slate-700">
+            <h3 className="text-lg font-medium text-white mb-4 flex items-center">
+                <Server className="w-5 h-5 mr-2 text-blue-400" />
+                后端服务状态
+            </h3>
 
-                  <div className="mt-4 pt-4 border-t border-slate-700">
-                      <p className="text-slate-400">当前版本：v1.2.4-stable</p>
-                      <p className="text-slate-400">构建时间：2023-10-27 14:30:00 UTC</p>
-                  </div>
-              </div>
-          </div>
-      </div>
-  )
+            <div className={`p-4 rounded-lg border flex items-center justify-between mb-6 ${
+                backendHealth === 'ONLINE' ? 'bg-green-900/20 border-green-500/30' : 
+                backendHealth === 'OFFLINE' ? 'bg-red-900/20 border-red-500/30' : 'bg-slate-700/30 border-slate-600'
+            }`}>
+                <div className="flex items-center space-x-3">
+                    <Activity className={`w-6 h-6 ${backendHealth === 'ONLINE' ? 'text-green-500' : 'text-slate-400'}`} />
+                    <div>
+                        <p className="font-bold text-white">
+                            {backendHealth === 'ONLINE' ? '系统运行正常' : backendHealth === 'OFFLINE' ? '未检测到后端服务' : '正在检测连接...'}
+                        </p>
+                        <p className="text-xs text-slate-400">
+                            API Endpoint: http://localhost:8000/api
+                        </p>
+                    </div>
+                </div>
+                <button onClick={checkBackend} className="px-3 py-1 bg-slate-800 hover:bg-slate-700 text-xs text-white rounded border border-slate-600 transition-colors">
+                    刷新状态
+                </button>
+            </div>
+            
+            <div className="space-y-4">
+                <h4 className="text-sm font-medium text-slate-300 flex items-center">
+                    <Terminal className="w-4 h-4 mr-2" />
+                    如何启动后端服务 (Linux/Mac/Windows)
+                </h4>
+                <div className="bg-black/50 p-4 rounded-lg font-mono text-xs text-slate-300 space-y-2 border border-slate-800">
+                    <p className="text-slate-500"># 1. 进入后端目录</p>
+                    <p className="text-green-400">cd backend</p>
+                    
+                    <p className="text-slate-500 mt-2"># 2. (可选) 创建虚拟环境</p>
+                    <p className="text-green-400">python -m venv venv</p>
+                    <p className="text-green-400">source venv/bin/activate</p>
+                    
+                    <p className="text-slate-500 mt-2"># 3. 安装依赖</p>
+                    <p className="text-green-400">pip install -r requirements.txt</p>
+                    
+                    <p className="text-slate-500 mt-2"># 4. 启动服务</p>
+                    <p className="text-green-400">uvicorn main:app --reload --host 0.0.0.0 --port 8000</p>
+                </div>
+
+                 <h4 className="text-sm font-medium text-slate-300 flex items-center pt-2">
+                    <Server className="w-4 h-4 mr-2" />
+                    Docker 方式启动
+                </h4>
+                 <div className="bg-black/50 p-4 rounded-lg font-mono text-xs text-slate-300 space-y-2 border border-slate-800">
+                    <p className="text-green-400">cd backend</p>
+                    <p className="text-green-400">docker build -t quantflow .</p>
+                    <p className="text-green-400">docker run -d -p 8000:8000 -v $(pwd)/data:/app/data quantflow</p>
+                </div>
+            </div>
+        </div>
+    </div>
+  );
 
   return (
     <div className="max-w-5xl mx-auto pb-10">
